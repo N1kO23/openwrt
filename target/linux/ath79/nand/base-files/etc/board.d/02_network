@@ -7,6 +7,10 @@ ath79_setup_interfaces()
 	local board="$1"
 
 	case "$board" in
+	asus,4g-ac55u)
+		ucidef_set_interfaces_lan_wan "lan1 lan2 lan3 lan4" "wan"
+		ucidef_set_interface "wwan" protocol "ncm" device "/dev/ttyACM0"
+		;;
 	aerohive,hiveap-121|\
 	meraki,mr18)
 		ucidef_set_interface_lan "eth0"

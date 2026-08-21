@@ -1,0 +1,409 @@
+// SPDX-License-Identifier: GPL-2.0-or-later OR MIT
+/*
+* ASUS 4G-AC55U
+*
+* SoC:    Qualcomm Atheros QCA9558 (MIPS 74Kc @ 720MHz), NAND boot
+* Switch: Atheros/Qualcomm AR8327(N) - 4x LAN + 1x WAN, built-in 2.4GHz radio
+* 5GHz:   QCA988x-family chip on PCIe0 (ath10k "offload" firmware in stock dmesg)
+* Modem:  internal Qualcomm-based LTE modem on its own USB bus (05c6:9026, ttyACM)
+*
+* This file was reconstructed from a stock-firmware dmesg capture, an nvram
+* dump, a decoded GPIO table, and a live "cat /proc/mtd" from a booted unit
+* -- NOT from a datasheet or a serial-console bring-up session. The top-level
+* NAND partition boundaries below are now CONFIRMED against /proc/mtd.
+* Everything still under a "NEEDS VERIFICATION" comment is a best-effort
+* inference and must be confirmed on real hardware before this is trusted
+* for sysupgrade. See the accompanying porting notes for how each value was
+* derived.
+*/
+
+/dts-v1/;
+
+#include "qca955x.dtsi"
+
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/input/input.h>
+
+/ {
+	compatible = "asus,4g-ac55u", "qca,qca9558";
+	model = "ASUS 4G-AC55U";
+	
+	aliases {
+		led-boot = &led_power;
+		led-failsafe = &led_power;
+		led-running = &led_power;
+		led-upgrade = &led_power;
+		/* NEEDS VERIFICATION: confirm eth0 vs eth1 is the "primary" MAC */
+		label-mac-device = &eth0;
+	};
+	
+	chosen {
+		bootargs = "console=ttyS0,115200";
+	};
+	
+	/*
+	* Button GPIOs decoded from gpio_mappings.txt: stock nvram encodes
+	* SoC GPIOs as (4096 + pin), active-low.
+	*   btn_wps_gpio   = 4112 -> gpio 16
+	*   btn_rst_gpio   = 4113 -> gpio 17
+	*   btn_wifi_gpio  = 4097 -> gpio 1
+	*   btn_lte_gpio   = 4117 -> gpio 21
+	*/
+	keys {
+		compatible = "gpio-keys";
+		
+		button-wps {
+			label = "wps";
+			linux,code = <KEY_WPS_BUTTON>;
+			gpios = <&gpio 16 GPIO_ACTIVE_LOW>;
+			debounce-interval = <60>;
+		};
+		
+		button-reset {
+			label = "reset";
+			linux,code = <KEY_RESTART>;
+			gpios = <&gpio 17 GPIO_ACTIVE_LOW>;
+			debounce-interval = <60>;
+		};
+		
+		button-wifi {
+			label = "wifi";
+			linux,code = <KEY_RFKILL>;
+			gpios = <&gpio 1 GPIO_ACTIVE_LOW>;
+			debounce-interval = <60>;
+		};
+		
+		button-lte {
+			label = "lte";
+			linux,code = <BTN_0>;
+			gpios = <&gpio 21 GPIO_ACTIVE_LOW>;
+			debounce-interval = <60>;
+		};
+	};
+	
+	/*
+	* LED GPIOs, same (4096 + pin) decoding as above:
+	*   led_pwr_gpio  = 4114 -> gpio 18 (shared with WPS status in stock fw)
+	*   led_lte_gpio  = 4119 -> gpio 23
+	*   led_sig1_gpio = 4115 -> gpio 19
+	*   led_sig2_gpio = 4116 -> gpio 20
+	*   led_sig3_gpio = 4111 -> gpio 15
+	*
+	* The 2.4G/5G/WAN/LAN/USB indicators are driven differently -- see
+	* the "NEEDS VERIFICATION" block further down.
+	*/
+	leds {
+		compatible = "gpio-leds";
+		
+		led_power: power {
+			label = "green:power";
+			gpios = <&gpio 18 GPIO_ACTIVE_LOW>;
+			default-state = "on";
+		};
+		
+		led-lte {
+			label = "green:lte";
+			gpios = <&gpio 23 GPIO_ACTIVE_LOW>;
+		};
+		
+		led-signal1 {
+			label = "green:signal1";
+			gpios = <&gpio 19 GPIO_ACTIVE_LOW>;
+		};
+		
+		led-signal2 {
+			label = "green:signal2";
+			gpios = <&gpio 20 GPIO_ACTIVE_LOW>;
+		};
+		
+		led-signal3 {
+			label = "green:signal3";
+			gpios = <&gpio 15 GPIO_ACTIVE_LOW>;
+		};
+		
+		/*
+		* dmesg from stock firmware shows the "bled" (blink-LED)
+		* helper wired directly to plain SoC GPIOs for radio/WAN/USB
+		* activity, independent of the nvram led_*_gpio table:
+		*   bled: GPIO#14: netdev ath0.            (2.4GHz activity)
+		*   bled: GPIO#4:  netdev ath1.             (5GHz activity)
+		*   bled: GPIO#22: netdev eth0.             (WAN activity)
+		*   bled: GPIO#13: switch ports mask 0.     (LAN activity)
+		*   bled: GPIO#12: USB BUS mask 3.          (USB activity)
+		* These are used below with netdev/usbport triggers rather
+		* than being left as static on/off LEDs.
+		*/
+		led-wifi2g {
+			label = "green:wifi2g";
+			gpios = <&gpio 14 GPIO_ACTIVE_LOW>;
+			linux,default-trigger = "phy1tpt";
+		};
+		
+		led-wifi5g {
+			label = "green:wifi5g";
+			gpios = <&gpio 4 GPIO_ACTIVE_LOW>;
+			linux,default-trigger = "phy0tpt";
+		};
+		
+		led-wan {
+			label = "green:wan";
+			gpios = <&gpio 22 GPIO_ACTIVE_LOW>;
+			linux,default-trigger = "netdev";
+			/* NEEDS VERIFICATION: confirm eth0 really is WAN, see notes */
+		};
+		
+		led-lan {
+			label = "green:lan";
+			gpios = <&gpio 13 GPIO_ACTIVE_LOW>;
+			linux,default-trigger = "netdev";
+			/* NEEDS VERIFICATION: confirm eth1 really is LAN, see notes */
+		};
+		
+		led-usb {
+			label = "green:usb";
+			gpios = <&gpio 12 GPIO_ACTIVE_LOW>;
+			trigger-sources = <&hub_port0>, <&hub_port1>;
+			linux,default-trigger = "usbport";
+		};
+	};
+	
+	/*
+	* NEEDS VERIFICATION: the nvram led_2g_gpio/led_5g_gpio/led_wan_gpio/
+	* led_lan_gpio/led_usb_gpio entries all decode to values >= 12288,
+	* which is outside the SoC's 24-line GPIO block entirely. That range
+	* is how stock firmware addresses the AR8327's own per-port LED
+	* controller, not a SoC GPIO. If the GPIO-based LEDs above don't
+	* match what the case silkscreens actually show, the real LEDs are
+	* likely switch-driven and belong as "qca,ar8327-leds" child nodes
+	* under the switch's PHY node (see &mdio0 below) instead -- that
+	* requires confirming the port/channel mapping on the bench first,
+	* so it's intentionally left out rather than guessed.
+	*/
+};
+
+&uart {
+	status = "okay";
+};
+
+/*
+* This board boots from NAND, not SPI-NOR (dmesg: "ath79-nand" /
+* "AR71xx/AR9xxx Qualcomm-Atheros NAND FLash Controller driver", NAND ID
+* 0x92 0xf1, 128MiB, page 2048B / block 128KiB / oob 64B). The onboard SPI-NOR
+* (if present at all on this SKU) is not used for boot and is left disabled.
+*
+* Flash layout reconstructed from dmesg partition table:
+*   0x0000000-0x00E0000  "Bootloader"   (MTD_BOOT_PART_SIZE   = 0xe0000)
+*   0x00E0000-0x0100000  ASUS config    (MTD_CONFIG_PART_SIZE = 0x20000)
+*   0x0100000-0x7F00000  "UBI_DEV"      (126 MiB, UBI: kernel + rootfs volumes)
+*   0x7F00000-0x8000000  "caldata"      (1 MiB, last block of NAND)
+*/
+&nand {
+	status = "okay";
+	
+	partitions {
+		compatible = "fixed-partitions";
+		#address-cells = <1>;
+		#size-cells = <1>;
+		
+		partition@0 {
+			label = "u-boot";
+			reg = <0x0000000 0x00e0000>;
+			read-only;
+		};
+		
+		partition@e0000 {
+			label = "config";
+			reg = <0x00e0000 0x0020000>;
+			read-only;
+		};
+		
+		partition@100000 {
+			label = "ubi";
+			reg = <0x0100000 0x7e00000>;
+		};
+		
+		art: partition@7f00000 {
+			label = "art";
+			reg = <0x7f00000 0x0100000>;
+			read-only;
+			
+			/*
+			* NEEDS VERIFICATION: offset 0x1000 is the common
+			* ath79/QCA955x default for the built-in wmac's
+			* calibration blob, but it has NOT been confirmed
+			* against an actual dump of this partition. Pull
+			* /dev/mtdX (art) off a running unit (or via the
+			* bootloader) and check before relying on this.
+			*/
+			cal_art_1000: calibration@1000 {
+				reg = <0x1000 0x844>;
+			};
+		};
+	};
+};
+
+&wmac {
+	status = "okay";
+	
+	nvmem-cells = <&cal_art_1000>;
+	nvmem-cell-names = "calibration";
+};
+
+/*
+* 5GHz radio: QCA988x-family chip on PCIe0 (stock dmesg shows a single
+* PCI device at 0000:00:00.0, class 0x0280 network controller; PCIe1
+* reported "link is down" so it's left disabled). Needs ath10k(-ct) +
+* matching board-2.bin/firmware, and its own pre-cal data extracted from
+* the "art" partition at a currently-unknown offset (NEEDS VERIFICATION).
+*/
+&pcie0 {
+	status = "okay";
+};
+
+&pcie1 {
+	status = "disabled";
+};
+
+/*
+* Two independent USB buses match both usb_devices.txt (two root hubs)
+* and nvram's "ehci_ports=1-1 2-1": bus 1 is the external USB2.0 port,
+* bus 2 goes internally to the soldered-down LTE modem (Qualcomm-based,
+* 05c6:9026, exposes ttyACM/QMI -- see usb_path2_* in nvram).
+* NEEDS VERIFICATION: confirm the upstream label names against the real
+* qca955x.dtsi (usb0/usb1 vs ehci0/ehci1) -- shown here as usb0/usb1.
+*/
+&usb0 {
+	status = "okay";
+	
+	hub_port0: port@1 {
+		reg = <1>;
+		#trigger-source-cells = <0>;
+	};
+};
+
+&usb1 {
+	status = "okay";
+	/* internal, non-removable: the LTE modem lives here */
+	
+	hub_port1: port@1 {
+		reg = <1>;
+		#trigger-source-cells = <0>;
+	};
+};
+
+&mdio0 {
+	status = "okay";
+	
+	phy_switch: switch@0 {
+		compatible = "qca,ar8327";
+		reg = <0>;
+		
+		/*
+		* NEEDS VERIFICATION: these initvals are carried over from
+		* other QCA9558+AR8327 boards (e.g. Netgear WNDR4300-class
+		* devices) as a starting point for LED-polarity/SGMII driver
+		* strength setup. A community porting thread for the very
+		* similar (non-LTE) ASUS RT-AC55U hit exactly this wall --
+		* see https://forum.openwrt.org/t/qca955x-dts-ethernet-phys-porting-openwrt-to-asus-rt-ac55u/104791
+		* -- and had to scan PHY addresses empirically. Expect to
+		* do the same here rather than trusting these values as-is.
+		*/
+		qca,ar8327-initvals = <
+		0x04 0x07600000
+		0x0c 0x01000000
+		0x10 0xc1000000
+		0x50 0xcc35cc35
+		0x54 0xcb37cb37
+		0x7c 0x0000007e
+		0x94 0x0000007e
+		>;
+		
+		ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
+			
+			port@0 {
+				reg = <0>;
+				label = "cpu";
+				ethernet = <&eth0>;
+				phy-mode = "rgmii-id";
+				
+				fixed-link {
+					speed = <1000>;
+					full-duplex;
+				};
+			};
+			
+			/* NEEDS VERIFICATION: WAN vs LAN port numbering below */
+			port@1 {
+				reg = <1>;
+				label = "wan";
+			};
+			
+			port@2 {
+				reg = <2>;
+				label = "lan1";
+			};
+			
+			port@3 {
+				reg = <3>;
+				label = "lan2";
+			};
+			
+			port@4 {
+				reg = <4>;
+				label = "lan3";
+			};
+			
+			port@5 {
+				reg = <5>;
+				label = "lan4";
+			};
+		};
+	};
+};
+
+&eth0 {
+	status = "okay";
+	
+	phy-mode = "rgmii-id";
+	phy-handle = <&phy_switch>;
+	
+	/* NEEDS VERIFICATION: MAC source/offset, see "config" partition note */
+	nvmem-cells = <&macaddr_config_0>;
+	nvmem-cell-names = "mac-address";
+};
+
+&eth1 {
+	status = "okay";
+	
+	/*
+	* nvram: lan_ifnames="eth1 ath0 ath1" -- eth1 is bridged with both
+	* radios as the LAN-side MAC, reaching the switch's 2nd (SGMII) CPU
+	* port rather than the RGMII port used for WAN on eth0.
+	*/
+	phy-mode = "sgmii";
+	
+	nvmem-cells = <&macaddr_config_4>;
+	nvmem-cell-names = "mac-address";
+};
+
+/*
+* MAC addresses: nvram shows et0macaddr=...:20 (eth0/WAN, also the 2.4GHz
+* radio's address) and et1macaddr=...:24 (eth1/LAN, also the 5GHz radio's
+* address), i.e. a shared base address with fixed offsets -- but nothing
+* in the provided dumps pins down *where* on the flash that base address
+* actually lives. Modeled here as living in the "config" partition;
+* NEEDS VERIFICATION with a real dump before trusting the offsets.
+*/
+&config {
+	compatible = "nvmem-cells";
+	
+	macaddr_config_0: macaddr@0 {
+		reg = <0x0 0x6>;
+	};
+	
+	macaddr_config_4: macaddr@4 {
+		reg = <0x4 0x6>;
+	};
+};

@@ -434,6 +434,27 @@ define Device/netgear_wndr4300tn
 endef
 TARGET_DEVICES += netgear_wndr4300tn
 
+define Device/asus_4g-ac55u
+  SOC := qca9558
+  DEVICE_VENDOR := ASUS
+  DEVICE_MODEL := 4G-AC55U
+  ATH_SOC := qca9558
+  KERNEL_IN_UBI := 1
+  BLOCKSIZE := 128k
+  PAGESIZE := 2048
+  SUBPAGESIZE := 512
+  UBINIZE_OPTS := -E 5
+  IMAGES := sysupgrade.bin
+  IMAGE/sysupgrade.bin := sysupgrade-tar | append-metadata
+  DEVICE_PACKAGES := \
+	kmod-ath10k-ct ath10k-firmware-qca988x-ct \
+	kmod-usb2 kmod-usb-ledtrig-usbport \
+	kmod-usb-net-qmi-wwan uqmi wwan
+endef
+TARGET_DEVICES += asus_4g-ac55u
+
+
+
 define Device/netgear_wndr4300-v2
   SOC := qca9563
   DEVICE_COMPAT_VERSION := 1.1
