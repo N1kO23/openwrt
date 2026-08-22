@@ -8,13 +8,14 @@
 * Modem:  internal Qualcomm-based LTE modem on its own USB bus (05c6:9026, ttyACM)
 *
 * This file was reconstructed from a stock-firmware dmesg capture, an nvram
-* dump, a decoded GPIO table, and a live "cat /proc/mtd" from a booted unit
-* -- NOT from a datasheet or a serial-console bring-up session. The top-level
-* NAND partition boundaries below are now CONFIRMED against /proc/mtd.
-* Everything still under a "NEEDS VERIFICATION" comment is a best-effort
-* inference and must be confirmed on real hardware before this is trusted
-* for sysupgrade. See the accompanying porting notes for how each value was
-* derived.
+* dump, a decoded GPIO table, a live "cat /proc/mtd", a real U-Boot serial
+* log, raw dd dumps of mtd0/mtd2/mtd3/mtd4/mtd10, and on-hardware bring-up
+* of the ethernet/switch block -- not from a datasheet. NAND partition
+* boundaries, the wmac calibration, both MAC addresses, and the AR8327
+* switch binding (legacy single-PHY/swconfig, not DSA) are all CONFIRMED
+* against that hardware. Everything still under a "NEEDS VERIFICATION"
+* comment (LAN/WAN port-to-jack mapping, the switch/WAN/LAN/USB LED wiring,
+* the usb0/usb1 label names) remains an open, best-effort guess.
 */
 
 /dts-v1/;
@@ -181,7 +182,7 @@
 	*/
 };
 
-&uart {
+&uart0 {
 	status = "okay";
 };
 
@@ -227,16 +228,40 @@
 			reg = <0x7f00000 0x0100000>;
 			read-only;
 			
+			compatible = "nvmem-cells";
+			#address-cells = <1>;
+			#size-cells = <1>;
+			
 			/*
-			* NEEDS VERIFICATION: offset 0x1000 is the common
-			* ath79/QCA955x default for the built-in wmac's
-			* calibration blob, but it has NOT been confirmed
-			* against an actual dump of this partition. Pull
-			* /dev/mtdX (art) off a running unit (or via the
-			* bootloader) and check before relying on this.
+			* CONFIRMED against a raw dump of this exact partition
+			* (mtd10 "caldata", byte-identical to the UBI "Factory"
+			* volume's still-intact copy). Real, structured,
+			* calibration-shaped data (repeating per-rate/per-chain
+			* power tables) starts exactly at 0x1000 and runs to
+			* ~0x1440, matching the common ath79/QCA955x wmac
+			* convention this offset/size were originally guessed
+			* from -- no longer a guess.
 			*/
 			cal_art_1000: calibration@1000 {
 				reg = <0x1000 0x844>;
+			};
+			
+			/* CONFIRMED: matches et0macaddr from the stock nvram
+			* dump byte-for-byte (ac:9e:17:58:99:20). */
+			macaddr_art_1002: macaddr@1002 {
+				reg = <0x1002 0x6>;
+			};
+			
+			/*
+			* CONFIRMED: matches et1macaddr/wl1_hwaddr from nvram
+			* (ac:9e:17:58:99:24). Sits at the head of a second
+			* calibration-shaped bundle (0x5000-0x5800) that's
+			* almost certainly the 5GHz/QCA988x pre-cal data --
+			* see the ath10k note under &pcie0 for why that one
+			* isn't just wired up as an nvmem-cell here.
+			*/
+			macaddr_art_5006: macaddr@5006 {
+				reg = <0x5006 0x6>;
 			};
 		};
 	};
@@ -253,8 +278,22 @@
 * 5GHz radio: QCA988x-family chip on PCIe0 (stock dmesg shows a single
 * PCI device at 0000:00:00.0, class 0x0280 network controller; PCIe1
 * reported "link is down" so it's left disabled). Needs ath10k(-ct) +
-* matching board-2.bin/firmware, and its own pre-cal data extracted from
-* the "art" partition at a currently-unknown offset (NEEDS VERIFICATION).
+* matching board-2.bin/firmware.
+*
+* Its pre-cal data almost certainly lives at art+0x5000 (see
+* macaddr_art_5006 above -- same calibration-table shape as the confirmed
+* wmac bundle at 0x1000, anchored by the confirmed 5GHz MAC). It is
+* deliberately NOT wired up as a DT nvmem-cell here: a PCIe-attached
+* ath10k doesn't consume pre-cal via the PCI node's own nvmem property
+* the way an integrated/platform-device radio would. The standard OpenWrt
+* mechanism instead extracts these bytes into
+* /lib/firmware/ath10k/.../pre-cal-pci-0000:00:00.0.bin via a hotplug/
+* board.d helper (an "ath10kcal_extract"-style function keyed to the
+* "art" mtd partition + this offset). Confirm the exact current helper
+* name/args in the ath79 target tree rather than assuming -- and note
+* ath10k works fine with the generic ath10k-firmware-qca988x-ct board
+* data even with no per-device pre-cal at all, so this is an optimization
+* to add once the board boots, not a blocker.
 */
 &pcie0 {
 	status = "okay";
@@ -294,84 +333,46 @@
 &mdio0 {
 	status = "okay";
 	
-	phy_switch: switch@0 {
-		compatible = "qca,ar8327";
+	/*
+	* CONFIRMED working on real hardware. This board's AR8327 needs the
+	* legacy single-PHY/swconfig binding, not a DSA ports list -- matches
+	* "switch0: Atheros AR8337 rev. 2 switch registered on mdio.0" in the
+	* OpenWrt bootlog (that's the legacy driver's own log line). These
+	* initvals, and the pll-data on &eth0/&eth1 below, came from a
+	* community port of the very similar (non-LTE) ASUS RT-AC55U:
+	* https://forum.openwrt.org/t/qca955x-dts-ethernet-phys-porting-openwrt-to-asus-rt-ac55u/104791
+	*/
+	phy0: ethernet-phy@0 {
 		reg = <0>;
+		phy-mode = "rgmii-id";
 		
-		/*
-		* NEEDS VERIFICATION: these initvals are carried over from
-		* other QCA9558+AR8327 boards (e.g. Netgear WNDR4300-class
-		* devices) as a starting point for LED-polarity/SGMII driver
-		* strength setup. A community porting thread for the very
-		* similar (non-LTE) ASUS RT-AC55U hit exactly this wall --
-		* see https://forum.openwrt.org/t/qca955x-dts-ethernet-phys-porting-openwrt-to-asus-rt-ac55u/104791
-		* -- and had to scan PHY addresses empirically. Expect to
-		* do the same here rather than trusting these values as-is.
-		*/
 		qca,ar8327-initvals = <
-		0x04 0x07600000
-		0x0c 0x01000000
-		0x10 0xc1000000
-		0x50 0xcc35cc35
-		0x54 0xcb37cb37
+		0x04 0x87600000
+		0x0c 0x00080080
+		0x10 0x81000080
+		0x50 0xffb7ffb7
+		0x54 0xffb7ffb7
+		0x58 0xffb7ffb7
+		0x5c 0x03ffff00
 		0x7c 0x0000007e
 		0x94 0x0000007e
 		>;
-		
-		ports {
-			#address-cells = <1>;
-			#size-cells = <0>;
-			
-			port@0 {
-				reg = <0>;
-				label = "cpu";
-				ethernet = <&eth0>;
-				phy-mode = "rgmii-id";
-				
-				fixed-link {
-					speed = <1000>;
-					full-duplex;
-				};
-			};
-			
-			/* NEEDS VERIFICATION: WAN vs LAN port numbering below */
-			port@1 {
-				reg = <1>;
-				label = "wan";
-			};
-			
-			port@2 {
-				reg = <2>;
-				label = "lan1";
-			};
-			
-			port@3 {
-				reg = <3>;
-				label = "lan2";
-			};
-			
-			port@4 {
-				reg = <4>;
-				label = "lan3";
-			};
-			
-			port@5 {
-				reg = <5>;
-				label = "lan4";
-			};
-		};
 	};
 };
 
 &eth0 {
 	status = "okay";
 	
-	phy-mode = "rgmii-id";
-	phy-handle = <&phy_switch>;
+	pll-data = <0xa6000000 0x00000101 0x00001616>;
+	phy-handle = <&phy0>;
 	
-	/* NEEDS VERIFICATION: MAC source/offset, see "config" partition note */
-	nvmem-cells = <&macaddr_config_0>;
+	nvmem-cells = <&macaddr_art_1002>;
 	nvmem-cell-names = "mac-address";
+	
+	fixed-link {
+		speed = <1000>;
+		full-duplex;
+	};
 };
 
 &eth1 {
@@ -382,28 +383,22 @@
 	* radios as the LAN-side MAC, reaching the switch's 2nd (SGMII) CPU
 	* port rather than the RGMII port used for WAN on eth0.
 	*/
-	phy-mode = "sgmii";
+	pll-data = <0x03000101 0x00000101 0x00001616>;
 	
-	nvmem-cells = <&macaddr_config_4>;
+	nvmem-cells = <&macaddr_art_5006>;
 	nvmem-cell-names = "mac-address";
+	
+	fixed-link {
+		speed = <1000>;
+		full-duplex;
+	};
 };
 
 /*
-* MAC addresses: nvram shows et0macaddr=...:20 (eth0/WAN, also the 2.4GHz
-* radio's address) and et1macaddr=...:24 (eth1/LAN, also the 5GHz radio's
-* address), i.e. a shared base address with fixed offsets -- but nothing
-* in the provided dumps pins down *where* on the flash that base address
-* actually lives. Modeled here as living in the "config" partition;
-* NEEDS VERIFICATION with a real dump before trusting the offsets.
+* With the legacy swconfig binding above, per-port LAN/WAN VLAN separation
+* is NOT described anywhere in the DTS -- it's entirely a board.d/02_network
+* "ucidef_add_switch" job in userspace (see the porting notes for a draft).
+* NEEDS VERIFICATION: which physical jack maps to which logical switch
+* port number is a guess (1-4 LAN, 5 WAN) until confirmed on the bench by
+* plugging into each jack and checking `swconfig dev switch0 show`.
 */
-&config {
-	compatible = "nvmem-cells";
-	
-	macaddr_config_0: macaddr@0 {
-		reg = <0x0 0x6>;
-	};
-	
-	macaddr_config_4: macaddr@4 {
-		reg = <0x4 0x6>;
-	};
-};
