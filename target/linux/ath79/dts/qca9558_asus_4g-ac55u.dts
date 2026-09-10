@@ -97,28 +97,28 @@
 		compatible = "gpio-leds";
 		
 		led_power: power {
-			label = "green:power";
+			label = "blue:power";
 			gpios = <&gpio 18 GPIO_ACTIVE_LOW>;
 			default-state = "on";
 		};
 		
 		led-lte {
-			label = "green:lte";
+			label = "blue:lte";
 			gpios = <&gpio 23 GPIO_ACTIVE_LOW>;
 		};
 		
 		led-signal1 {
-			label = "green:signal1";
+			label = "blue:signal1";
 			gpios = <&gpio 19 GPIO_ACTIVE_LOW>;
 		};
 		
 		led-signal2 {
-			label = "green:signal2";
+			label = "blue:signal2";
 			gpios = <&gpio 20 GPIO_ACTIVE_LOW>;
 		};
 		
 		led-signal3 {
-			label = "green:signal3";
+			label = "blue:signal3";
 			gpios = <&gpio 15 GPIO_ACTIVE_LOW>;
 		};
 		
@@ -135,35 +135,35 @@
 		* than being left as static on/off LEDs.
 		*/
 		led-wifi2g {
-			label = "green:wifi2g";
+			label = "blue:wifi2g";
 			gpios = <&gpio 14 GPIO_ACTIVE_LOW>;
 			linux,default-trigger = "phy1tpt";
 		};
 		
 		led-wifi5g {
-			label = "green:wifi5g";
+			label = "blue:wifi5g";
 			gpios = <&gpio 4 GPIO_ACTIVE_LOW>;
 			linux,default-trigger = "phy0tpt";
 		};
 		
 		led-wan {
-			label = "green:wan";
+			label = "blue:wan";
 			gpios = <&gpio 22 GPIO_ACTIVE_LOW>;
 			linux,default-trigger = "netdev";
 			/* NEEDS VERIFICATION: confirm eth0 really is WAN, see notes */
 		};
 		
 		led-lan {
-			label = "green:lan";
+			label = "blue:lan";
 			gpios = <&gpio 13 GPIO_ACTIVE_LOW>;
 			linux,default-trigger = "netdev";
 			/* NEEDS VERIFICATION: confirm eth1 really is LAN, see notes */
 		};
 		
 		led-usb {
-			label = "green:usb";
+			label = "blue:usb";
 			gpios = <&gpio 12 GPIO_ACTIVE_LOW>;
-			trigger-sources = <&hub_port0>, <&hub_port1>;
+			trigger-sources = <&hub_port0>;
 			linux,default-trigger = "usbport";
 		};
 	};
@@ -277,23 +277,24 @@
 /*
 * 5GHz radio: QCA988x-family chip on PCIe0 (stock dmesg shows a single
 * PCI device at 0000:00:00.0, class 0x0280 network controller; PCIe1
-* reported "link is down" so it's left disabled). Needs ath10k(-ct) +
-* matching board-2.bin/firmware.
+* reported "link is down" so it's left disabled).
 *
-* Its pre-cal data almost certainly lives at art+0x5000 (see
-* macaddr_art_5006 above -- same calibration-table shape as the confirmed
-* wmac bundle at 0x1000, anchored by the confirmed 5GHz MAC). It is
-* deliberately NOT wired up as a DT nvmem-cell here: a PCIe-attached
-* ath10k doesn't consume pre-cal via the PCI node's own nvmem property
-* the way an integrated/platform-device radio would. The standard OpenWrt
-* mechanism instead extracts these bytes into
-* /lib/firmware/ath10k/.../pre-cal-pci-0000:00:00.0.bin via a hotplug/
-* board.d helper (an "ath10kcal_extract"-style function keyed to the
-* "art" mtd partition + this offset). Confirm the exact current helper
-* name/args in the ath79 target tree rather than assuming -- and note
-* ath10k works fine with the generic ath10k-firmware-qca988x-ct board
-* data even with no per-device pre-cal at all, so this is an optimization
-* to add once the board boots, not a blocker.
+* CONFIRMED NOT WORKING as of this writing, and the reason is understood:
+* this is first-generation "qca988x hw2.0" silicon on old firmware
+* (10.2.4-1.0-00047). Board data loads fine (board_file api 1 ...
+* crc32 bebc7c08), but OTP calibration fails ("otp calibration failed: 2").
+* Feeding it the confirmed pre-cal bundle at art+0x5000 (see
+* macaddr_art_5006 above, and the 11-ath10k-caldata hotplug script) gets
+* further -- the driver visibly switches into the pre-cal code path --
+* but then fails at "failed to get board id: -122". That mechanism was
+* added to ath10k for QCA99X0/QCA9888/QCA9984, a later hardware
+* generation than this chip; it may simply not be implemented by this
+* chip/firmware combination. ath10k-ct's own skip_otp module parameter
+* (a documented escape hatch for exactly this, at the cost of running
+* uncalibrated) is not exposed in this particular kmod-ath10k-ct build.
+* Left enabled below since board data + calibration hotplug are
+* legitimate groundwork regardless -- known, understood limitation, not
+* a bug to keep chasing without a different firmware build to test.
 */
 &pcie0 {
 	status = "okay";
@@ -308,9 +309,21 @@
 * and nvram's "ehci_ports=1-1 2-1": bus 1 is the external USB2.0 port,
 * bus 2 goes internally to the soldered-down LTE modem (Qualcomm-based,
 * 05c6:9026, exposes ttyACM/QMI -- see usb_path2_* in nvram).
-* NEEDS VERIFICATION: confirm the upstream label names against the real
-* qca955x.dtsi (usb0/usb1 vs ehci0/ehci1) -- shown here as usb0/usb1.
+* CONFIRMED against the real qca955x.dtsi: usb0/usb1 and the hub_port0/
+* hub_port1 child node names below are correct as-is. Each host
+* controller also depends on its own PHY node (usb_phy0/usb_phy1),
+* which defaults to status = "disabled" in the SoC dtsi and must be
+* enabled separately below -- without this, both controllers sit in
+* "deferred probe pending" forever and nothing on either bus enumerates.
 */
+&usb_phy0 {
+	status = "okay";
+};
+
+&usb_phy1 {
+	status = "okay";
+};
+
 &usb0 {
 	status = "okay";
 	
@@ -397,8 +410,10 @@
 /*
 * With the legacy swconfig binding above, per-port LAN/WAN VLAN separation
 * is NOT described anywhere in the DTS -- it's entirely a board.d/02_network
-* "ucidef_add_switch" job in userspace (see the porting notes for a draft).
-* NEEDS VERIFICATION: which physical jack maps to which logical switch
-* port number is a guess (1-4 LAN, 5 WAN) until confirmed on the bench by
-* plugging into each jack and checking `swconfig dev switch0 show`.
+* "ucidef_add_switch" job in userspace (dual CPU ports: 0@eth0=WAN,
+* 6@eth1=LAN aggregate). CONFIRMED on the bench: switch port 2 = the
+* case's "LAN1" jack (a test PC's own MAC address showed up on port 2 in
+* `swconfig dev switch0 show`'s ARL table). NEEDS VERIFICATION: ports
+* 1/3/4/5 (WAN, LAN2, LAN3, LAN4) are still unconfirmed placeholders --
+* same method, one jack at a time.
 */

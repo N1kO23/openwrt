@@ -1,0 +1,39 @@
+#!/bin/sh
+#
+# Place alongside the existing target/linux/ath79/.../base-files/etc/
+# hotplug.d/firmware/10-ath9k-eeprom (same directory, in the actual tree --
+# find it with e.g. `grep -rl "ath9k-eeprom-ahb" target/linux/ath79/` to
+# get the exact path, rather than assuming).
+#
+# Mirrors that file's structure exactly (same shebang, same early-exit
+# guard, same caldata.sh helpers, same board_name case pattern). The
+# UBI-volume-vs-raw-partition branching seen in the ath9k script's Meraki
+# cases doesn't apply here: this board's "art" partition is a plain raw
+# MTD partition outside the UBI region (confirmed via /proc/mtd and a raw
+# dd dump), not a UBI volume, so caldata_extract is used directly.
+#
+# Offset/size CONFIRMED against a raw dump of the art/caldata partition:
+# a calibration-table-shaped bundle sits at 0x5000, anchored by the 5GHz
+# radio's MAC address (ac:9e:17:58:99:24, matching wl1_hwaddr/et1macaddr
+# from the stock nvram dump) at 0x5006. Size 0x844 (2116 bytes) matches
+# ath10k-ct's own hardcoded .cal_data_len for QCA988x hw2.0 -- the same
+# length as this board's ath9k/wmac calibration cell, not a guess.
+
+[ -e /lib/firmware/$FIRMWARE ] && exit 0
+
+. /lib/functions/caldata.sh
+
+board=$(board_name)
+
+case "$FIRMWARE" in
+"ath10k/pre-cal-pci-0000:00:00.0.bin")
+	case $board in
+	asus,4g-ac55u)
+		caldata_extract "art" 0x5000 0x844
+		;;
+	*)
+		caldata_die "board $board is not supported yet"
+		;;
+	esac
+	;;
+esac

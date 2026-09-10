@@ -1,0 +1,40 @@
+#!/bin/sh
+#
+# Place at target/linux/ath79/nand/base-files/etc/uci-defaults/ alongside
+# 04_led_migration -- confirm no existing script already uses this number
+# first (`ls target/linux/ath79/nand/base-files/etc/uci-defaults/`).
+#
+# This board's onboard QCA9882 (5GHz radio) has no OTP calibration fuses
+# programmed -- calibration lives in flash instead (confirmed via raw dd
+# dumps of the art/caldata partition). ath10k's normal OTP-execution step
+# during probe fails hard on this hardware ("otp calibration failed: 2"),
+# and CONFIRMED on real hardware: the only fix is skip_otp=1 on
+# ath10k_core, set before it first loads -- /etc/modprobe.d/*.conf was
+# tested and confirmed NOT consulted by kmodloader at boot; the parameter
+# must be baked directly into /etc/modules.d/ath10k's own module line.
+#
+# Runs during "generating board file" (uci-defaults), which happens
+# between the two kmodloader passes -- /etc/modules-boot.d/* early, then
+# /etc/modules.d/* (where ath10k actually loads) later -- so this reaches
+# ath10k_core in time on the very first boot, not one boot late.
+#
+# The exact-match sed (rather than a generic capture-group pattern) is
+# deliberate: it's matched against this board's actual current
+# /etc/modules.d/ath10k content, confirmed via a real device. If a future
+# ath10k package changes its default frame_mode parameter, this won't
+# match and skip_otp won't be added -- worth re-checking against
+# /etc/modules.d/ath10k on a fresh build if 5GHz ever stops working after
+# an ath10k package update.
+
+. /lib/functions.sh
+
+board=$(board_name)
+
+case "$board" in
+asus,4g-ac55u)
+	grep -q "skip_otp" /etc/modules.d/ath10k || \
+		sed -i 's/^ath10k_core frame_mode=2$/ath10k_core frame_mode=2 skip_otp=1/' /etc/modules.d/ath10k
+	;;
+esac
+
+exit 0

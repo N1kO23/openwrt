@@ -6,6 +6,12 @@ board_config_update
 board=$(board_name)
 
 case "$board" in
+asus,4g-ac55u)
+  ucidef_set_led_switch "wan" "WAN" "blue:wan" "switch0" "0x02" "0xf" "link tx rx"
+  ucidef_set_led_switch "lan" "LAN" "blue:lan" "switch0" "0x3c" "0xf" "link tx rx"
+	ucidef_set_led_wlan "wlan" "WLAN" "blue:wifi2g" "phy1tpt" "link tx rx"
+	ucidef_set_led_wlan "wlan5g" "WLAN5G" "blue:wifi5g" "phy0tpt" "link tx rx"
+	;;
 dongwon,dw02-412h-64m|\
 dongwon,dw02-412h-128m)
 	ucidef_set_led_switch "wan" "WAN" "green:wan" "switch0" "0x02"

@@ -439,7 +439,8 @@ define Device/asus_4g-ac55u
   DEVICE_VENDOR := ASUS
   DEVICE_MODEL := 4G-AC55U
   ATH_SOC := qca9558
-  KERNEL_IN_UBI := 1
+  UBINIZE_PARTS := linux=$(IMAGE_KERNEL)
+  CI_KERNPART := linux
   BLOCKSIZE := 128k
   IMAGE_SIZE := 129024k
   PAGESIZE := 2048
@@ -448,11 +449,11 @@ define Device/asus_4g-ac55u
   IMAGE/factory.bin := append-ubi | check-size
   IMAGE/sysupgrade.bin := sysupgrade-tar | append-metadata
   DEVICE_PACKAGES := \
-    kmod-ath10k-ct ath10k-firmware-qca988x-ct \
+    kmod-ath10k ath10k-board-qca988x ath10k-firmware-qca988x \
     kmod-usb2 kmod-usb-ledtrig-usbport \
     kmod-usb-acm kmod-usb-serial-option kmod-usb-serial-wwan \
     kmod-usb-net-cdc-ether kmod-usb-net-rndis \
-    comgt comgt-ncm kmod-ppp wwan
+    comgt comgt-ncm kmod-usb-serial-option kmod-ppp wwan
 endef
 TARGET_DEVICES += asus_4g-ac55u
 
